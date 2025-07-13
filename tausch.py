@@ -1,9 +1,6 @@
-#!/usr/bin/env python3
-
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 from typing import Any
-import subprocess
 
 
 class TokenType(IntEnum):
@@ -21,7 +18,7 @@ class Token:
 
 
 class TauschError(Exception):
-    def __init__(self, message: str, location: int, suggestion: str = None):
+    def __init__(self, message: str, location: int = -1337, suggestion: str = None):
         self.message = message
         self.location = location
         self.suggestion = suggestion
@@ -59,13 +56,13 @@ class TreeNode:
         else:
             self.right = node
 
-    def print_tree(self, off: str = ""):
-        print(f"{off}{self.operation.typ if self.operation else "None"}")
-        off += "| "
+    def to_ascii(self, off: str = "", pointer: str = ""):
+        print(f"{off}{pointer}{self.operation.typ if self.operation else "None"}")
+        off += "|  "
         if self.left:
-            self.left.print_tree(off)
+            self.left.to_ascii(off, "|- ")
         if self.right:
-            self.right.print_tree(off)
+            self.right.to_ascii(off, "|- ")
 
     def to_dot_recursive(self, dotcode: str):
         label = "root"
@@ -84,7 +81,7 @@ class TreeNode:
 
         return dotcode
 
-    def create_dot(self) -> str:
+    def to_dot(self) -> str:
         dotcode = "graph {\n"
         dotcode = self.to_dot_recursive(dotcode)
         dotcode += "}\n"
@@ -201,51 +198,77 @@ class Tausch:
 
         return tree_root
 
-    def eval(self, data: str) -> str:
+    def _check(self, obj: Any, msg: str):
+        if not obj:
+            raise TauschError(msg)
+        return True
+
+    def eval(self, data: str) -> (str, TreeNode):
         self.data = data
         self._tokenize()
         tree_root = self._parse()
-        subprocess.run(
-            f'echo "{tree_root.create_dot()}" | dot -Tsvg -o tree.svg', shell=True
-        )
 
-        if (
-            tree_root.left
-            and tree_root.left.operation.typ is OpType.VARIABLE
-            and tree_root.left.operation.value in self.variables
-        ):
-            return self.variables[tree_root.left.operation.value]
+        if tree_root.left:
+            node_itr = tree_root.left
+            self._check(node_itr.operation, "No operation")
+            self._check(node_itr.operation.typ is OpType.VARIABLE, "Parse error")
+            self._check(
+                node_itr.operation.value in self.variables,
+                f"Variable '{node_itr.operation.value}' not found",
+            )
+            return (self.variables[node_itr.operation.value], tree_root)
 
-        if (
-            tree_root.right
-            and tree_root.right.operation.typ is OpType.IF_BLOCK
-            and tree_root.right.left.operation.typ is OpType.IF_CONDITION
-            and tree_root.right.left.operation.value in self.variables
-            and isinstance(self.variables[tree_root.right.left.operation.value], bool)
-            and tree_root.right.right.operation.typ is OpType.IF_BODY
-            and tree_root.right.right.left.operation.typ is OpType.VARIABLE
-            and tree_root.right.right.left.operation.value in self.variables
-            and tree_root.right.right.right.operation.typ is OpType.VARIABLE
-            and tree_root.right.right.right.operation.value in self.variables
-        ):
-            if self.variables[tree_root.right.left.operation.value]:
-                return self.variables[tree_root.right.right.left.operation.value]
-            return self.variables[tree_root.right.right.right.operation.value]
-        return ""
+        if tree_root.right:
+            if_block = tree_root.right
+            self._check(if_block.operation, "Parse error")
+            self._check(if_block.operation.typ is OpType.IF_BLOCK, "Parse error")
 
+            if_condition = tree_root.right.left
+            self._check(if_condition, "Parse error")
+            self._check(if_condition.operation, "Parse error")
+            self._check(
+                if_condition.operation.typ is OpType.IF_CONDITION, "Parse error"
+            )
+            self._check(
+                if_condition.operation.value in self.variables,
+                f"Variable '{if_condition.operation.value}' not found",
+            )
+            self._check(
+                isinstance(self.variables[if_condition.operation.value], bool),
+                f"Variable '{if_condition.operation.value}' must be boolean",
+            )
 
-if __name__ == "__main__":
-    var = {"hello": 42, "world": 69, "cond": True, "ncond": False}
-    print(f"Available variables: {var}")
-    tausch = Tausch(var)
-    while True:
-        statement = input("> ")
-        if statement.lower() == "exit":
-            break
+            if_body = tree_root.right.right
+            self._check(if_body, "Parse error")
+            self._check(if_body.operation, "Parse error")
+            self._check(if_body.operation.typ is OpType.IF_BODY, "Parse error")
 
-        try:
-            print(tausch.eval(statement))
-        except TauschError as e:
-            print(f"Failed at {e.location}: {e.message}")
-            if e.suggestion:
-                print(f"Suggestion: {e.suggestion}")
+            if_body_left = tree_root.right.right.left
+            self._check(if_body_left, "Parse error")
+            self._check(if_body_left.operation, "Parse error")
+            self._check(
+                if_body_left.operation.typ is OpType.VARIABLE,
+                "Parse error",
+            )
+            self._check(
+                if_body_left.operation.value in self.variables,
+                f"Variable '{if_body_left.operation.value}' not found",
+            )
+
+            if self.variables[if_condition.operation.value]:
+                return (self.variables[if_body_left.operation.value], tree_root)
+
+            if_body_right = tree_root.right.right.right
+            if if_body_right:
+                self._check(if_body_right.operation, "Parse error")
+                self._check(
+                    if_body_right.operation.typ is OpType.VARIABLE,
+                    "Parse error",
+                )
+                self._check(
+                    if_body_right.operation.value in self.variables,
+                    f"Variable '{if_body_right.operation.value}' not found",
+                )
+                return (self.variables[if_body_right.operation.value], tree_root)
+
+        return ("", tree_root)
