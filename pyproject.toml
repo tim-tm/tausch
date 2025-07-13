@@ -1,0 +1,7 @@
+[project]
+name = "tausch"
+readme = "README.md"
+license = "MIT"
+
+[tool.black]
+line-length = 79

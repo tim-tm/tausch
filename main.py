@@ -10,8 +10,29 @@ try:
 except:
     pass  # readline not available
 
+matches = []
+var = {"hello": 42, "world": 69, "cond": True, "ncond": False}
+
+
+def cmpl(text, state):
+    global matches
+
+    if state == 0:
+        if text:
+            matches = [v for v in var if v and v.startswith(text)]
+        else:
+            matches = var[:]
+
+    try:
+        return matches[state]
+    except IndexError:
+        return None
+
+
 if __name__ == "__main__":
-    var = {"hello": 42, "world": 69, "cond": True, "ncond": False}
+    readline.set_completer(cmpl)
+    readline.parse_and_bind("tab: complete")
+
     print(f"Available variables: {var}")
     tausch = Tausch(var)
     while True:
