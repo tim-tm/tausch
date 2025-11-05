@@ -1,5 +1,5 @@
 use core::fmt;
-use std::any::{Any, TypeId};
+use std::{any::Any, collections::HashMap};
 
 use iter_tools::Itertools;
 
@@ -9,20 +9,11 @@ pub enum TauschError {
     Parser(String),
 }
 
-#[allow(dead_code)]
-#[derive(Clone)]
-pub struct Variable<T: Clone> {
-    pub key: String,
-    pub value: T,
-}
-
-impl<T: Clone> Variable<T> {
-    pub fn new(key: String, value: T) -> Variable<T> {
-        Variable {
-            key: key,
-            value: value,
-        }
-    }
+#[derive(Clone, Debug, PartialEq)]
+pub enum VariableValue {
+    Bool(bool),
+    Str(String),
+    Empty,
 }
 
 #[derive(Clone)]
@@ -148,80 +139,105 @@ impl Tokenizer {
     }
 }
 
-fn parse_if<T: Clone + 'static>(
-    variables: Vec<Variable<T>>,
+fn expect_token(
     iterator: &mut std::slice::Iter<Token>,
-) -> Result<Variable<T>, TauschError> {
+    typ: TokenType,
+    on_fail: String,
+) -> Result<Token, TauschError> {
     match iterator.next() {
         Some(tok) => {
-            if tok.typ == TokenType::Variable {
-                let condition = tok;
-                if let Some(tok) = iterator.next()
-                    && tok.typ == TokenType::IfEnd
-                {
-                    // TODO: refactor this piece of shit
-                    if let Some(tok) = iterator.next()
-                        && tok.typ == TokenType::Variable
-                    {
-                        if let Some(cond) = variables.iter().find(|var| var.key == condition.label)
-                        {
-                            if cond.value.type_id() == TypeId::of::<bool>() {
-                                if let Some(on_true) =
-                                    variables.iter().find(|var| var.key == tok.label)
-                                {
-                                    if on_true.value.type_id() == TypeId::of::<bool>() {
-                                        return Err(TauschError::Parser("var".to_string()));
-                                    } else {
-                                        return Err(TauschError::Parser("unreachable".to_string()));
-                                    }
-                                } else {
-                                    return Err(TauschError::Parser(format!(
-                                        "Variable '{}' does not exist!",
-                                        tok.label
-                                    )));
-                                }
-                            } else {
-                                return Err(TauschError::Parser(format!(
-                                    "Variable '{}' is not a bool!",
-                                    cond.key
-                                )));
-                            }
-                        } else {
-                            return Err(TauschError::Parser(format!(
-                                "Variable '{}' does not exist!",
-                                condition.label
-                            )));
-                        }
-                    } else {
-                        return Err(TauschError::Parser(
-                            "Expected variable name after end of if-statement condition!"
-                                .to_string(),
-                        ));
-                    }
-                } else {
-                    return Err(TauschError::Parser(
-                        "Expected ';' to end if-statement condition!".to_string(),
-                    ));
-                }
+            if tok.typ == typ {
+                Ok(tok.clone())
             } else {
-                return Err(TauschError::Parser(format!(
-                    "Expected variable name after 'if', found token of type: '{}'!",
-                    tok.typ
-                )));
+                Err(TauschError::Parser(on_fail))
             }
         }
-        None => {
-            return Err(TauschError::Parser(
-                "Expected variable name after 'if', found nothing!".to_string(),
-            ));
-        }
+        None => Err(TauschError::Parser(on_fail)),
     }
 }
 
-pub fn eval<T: Clone + 'static>(
-    variables: Vec<Variable<T>>,
+fn parse_if(
+    variables: HashMap<String, VariableValue>,
+    iterator: &mut std::slice::Iter<Token>,
+) -> Result<VariableValue, TauschError> {
+    let tok_condition = expect_token(
+        iterator,
+        TokenType::Variable,
+        "Expected variable name after 'if'!".to_string(),
+    )?;
+
+    let Some(var_condition) = variables.get(&tok_condition.label) else {
+        return Err(TauschError::Parser(format!(
+            "Variable '{}' does not exist!",
+            tok_condition.label
+        )));
+    };
+
+    let VariableValue::Bool(val_condition) = var_condition else {
+        return Err(TauschError::Parser(format!(
+            "Variable '{}' is not a bool!",
+            tok_condition.label
+        )));
+    };
+
+    expect_token(
+        iterator,
+        TokenType::IfEnd,
+        "Expected ';' after variable name inside of 'if'!".to_string(),
+    )?;
+
+    let tok_on_true = expect_token(
+        iterator,
+        TokenType::Variable,
+        "Expected variable name inside of 'if'-branch of if-statement.".to_string(),
+    )?;
+
+    let Some(val_on_true) = variables.get(&tok_on_true.label) else {
+        return Err(TauschError::Parser(format!(
+            "Variable '{}' does not exist!",
+            tok_on_true.label
+        )));
+    };
+
+    let mut peek_iter = iterator.peekable();
+    let Some(tok_else) = peek_iter.peek() else {
+        return Ok(if *val_condition {
+            val_on_true.clone()
+        } else {
+            VariableValue::Empty
+        });
+    };
+
+    if tok_else.typ != TokenType::IfElse {
+        return Err(TauschError::Parser(
+            "Expected ':' to start an 'else'-branch for the if-statement".to_string(),
+        ));
+    }
+
+    let tok_on_else = expect_token(
+        iterator,
+        TokenType::Variable,
+        "Expected variable name inside of 'if'-branch of if-statement.".to_string(),
+    )?;
+
+    let Some(val_on_else) = variables.get(&tok_on_else.label) else {
+        return Err(TauschError::Parser(format!(
+            "Variable '{}' does not exist!",
+            tok_on_else.label
+        )));
+    };
+
+    Ok(if *val_condition {
+        val_on_true.clone()
+    } else {
+        val_on_else.clone()
+    })
+}
+
+pub fn eval(
+    variables: HashMap<String, VariableValue>,
     input: String,
-) -> Result<Variable<T>, TauschError> {
+) -> Result<VariableValue, TauschError> {
     let toker = Tokenizer::new();
     let tokens = toker.tokenize(input)?;
 
@@ -229,7 +245,7 @@ pub fn eval<T: Clone + 'static>(
     match iter.next() {
         Some(tok) => match tok.typ {
             TokenType::Variable => {
-                if let Some(var) = variables.iter().find(|var| var.key == tok.label) {
+                if let Some(var) = variables.get(&tok.label) {
                     return Ok(var.clone());
                 } else {
                     return Err(TauschError::Parser(format!(
@@ -246,5 +262,78 @@ pub fn eval<T: Clone + 'static>(
             }
         },
         None => return Err(TauschError::Parser("No tokens".to_string())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use crate::{VariableValue, eval};
+
+    #[test]
+    fn eval_var() {
+        let mut vars = HashMap::<String, VariableValue>::new();
+        let var = VariableValue::Str("42".to_string());
+        let var_str = "hello".to_string();
+        vars.insert(var_str.clone(), var.clone());
+
+        assert_eq!(eval(vars.clone(), var_str).expect("should never fail"), var);
+    }
+
+    #[test]
+    fn eval_if_1() {
+        let mut vars = HashMap::<String, VariableValue>::new();
+        let var = VariableValue::Str("42".to_string());
+        vars.insert("hello".to_string(), var.clone());
+        vars.insert("cond".to_string(), VariableValue::Bool(true));
+
+        assert_eq!(
+            eval(vars.clone(), "if cond ; hello".to_string()).expect("should never fail"),
+            var
+        );
+    }
+
+    #[test]
+    fn eval_if_2() {
+        let mut vars = HashMap::<String, VariableValue>::new();
+        let var = VariableValue::Str("42".to_string());
+        vars.insert("hello".to_string(), var.clone());
+        vars.insert("cond".to_string(), VariableValue::Bool(false));
+
+        assert_eq!(
+            eval(vars.clone(), "if cond ; hello".to_string()).expect("should never fail"),
+            VariableValue::Empty
+        );
+    }
+
+    #[test]
+    fn eval_if_else_1() {
+        let mut vars = HashMap::<String, VariableValue>::new();
+        let var_hello = VariableValue::Str("42".to_string());
+        vars.insert("hello".to_string(), var_hello.clone());
+        vars.insert("world".to_string(), VariableValue::Str("69".to_string()));
+        vars.insert("cond".to_string(), VariableValue::Bool(true));
+        vars.insert("ncond".to_string(), VariableValue::Bool(false));
+
+        assert_eq!(
+            eval(vars.clone(), "if cond ; hello : world".to_string()).expect("should never fail"),
+            var_hello
+        );
+    }
+
+    #[test]
+    fn eval_if_else_2() {
+        let mut vars = HashMap::<String, VariableValue>::new();
+        let var_world = VariableValue::Str("69".to_string());
+        vars.insert("hello".to_string(), VariableValue::Str("42".to_string()));
+        vars.insert("world".to_string(), var_world.clone());
+        vars.insert("cond".to_string(), VariableValue::Bool(true));
+        vars.insert("ncond".to_string(), VariableValue::Bool(false));
+
+        assert_eq!(
+            eval(vars.clone(), "if ncond ; hello : world".to_string()).expect("should never fail"),
+            var_world
+        );
     }
 }
