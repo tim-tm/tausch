@@ -5,13 +5,12 @@ edition = "2024"
 
 [dependencies]
 iter_tools = "0.41.0"
-trie-rs = "0.4.2"
 
 [lib]
-path = "tausch.rs"
+path = "src/tausch.rs"
 
 [[bin]]
 name = "tausch"
 test = false
 bench = false
-path = "main.rs"
+path = "src/main.rs"
