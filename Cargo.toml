@@ -1,0 +1,16 @@
+[package]
+name = "tausch"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+iter_tools = "0.41.0"
+
+[lib]
+path = "src/tausch.rs"
+
+[[bin]]
+name = "tausch"
+test = false
+bench = false
+path = "src/main.rs"
