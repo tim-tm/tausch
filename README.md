@@ -1,3 +1,5 @@
+this project has moved to https://git.timteichmann.de/tausch/
+
 # tausch
 
 Small language that is meant to be used in an
